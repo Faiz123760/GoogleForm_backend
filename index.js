@@ -5,7 +5,9 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import helmet from "helmet";
 import xss from "xss-clean";
+import morgan from "morgan";
 import { generalLimiter } from "./middleware/rateLimiter.js";
+import { errorHandler } from "./middleware/errorHandler.js";
 
 import connectDB from "./config/db.js";
 import authRoutes from "./routes/authRoutes.js";
@@ -37,6 +39,13 @@ Object.defineProperty(express.request, 'query', {
 app.use(helmet()); // Set security HTTP headers
 app.use(xss()); // Sanitize user input from XSS POST/GET parameters
 
+// Logging Middleware
+if (process.env.NODE_ENV === "production") {
+  app.use(morgan("combined")); // Standard Apache combined log output
+} else {
+  app.use(morgan("dev")); // Concise output for development
+}
+
 app.use(
   "/docs",
   swaggerUi.serve,
@@ -63,6 +72,9 @@ app.use("/api/forms", formRoutes);
 app.use("/api/responses", responseRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/analytics", analyticsRoutes);
+
+// Global Error Handler (must be the last middleware)
+app.use(errorHandler);
 
 // Test Route
 app.get("/", (req, res) => {

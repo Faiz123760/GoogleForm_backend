@@ -6,7 +6,7 @@ import { parseUserAgent } from "../utils/uaParser.js";
 import { sendNotificationEmail, buildRespondentReceiptHTML, buildOwnerAlertHTML } from "./emailService.js";
 
 export const submitFormResponse = async (formId, submitterId, reqData, ipAddress, userAgent) => {
-  const { answers, password, submissionDuration } = reqData;
+  const { answers, password, submissionDuration, respondentEmail: reqEmail, sendCopy } = reqData;
 
   // 1. Fetch Form
   const form = await findFormById(formId);
@@ -52,9 +52,10 @@ export const submitFormResponse = async (formId, submitterId, reqData, ipAddress
     if (existingIpResponse) throw new Error("A submission has already been recorded from your IP address.");
   }
 
-  // 6. Validate answers
+  // 6. Validate answers and grade if quiz
   const validatedAnswers = [];
   const clientAnswers = answers || [];
+  let totalScore = 0;
 
   for (const field of form.fields) {
     const clientAnswer = clientAnswers.find(a => a.fieldId === field.id);
@@ -76,7 +77,31 @@ export const submitFormResponse = async (formId, submitterId, reqData, ipAddress
     }
 
     if (!isValueEmpty) {
-      validatedAnswers.push({ fieldId: field.id, value });
+      let isCorrect = false;
+      let scoreReceived = 0;
+
+      // Grade if it's a quiz
+      if (form.settings?.isQuiz && field.correctAnswer !== undefined) {
+        if (field.type === "multiple_choice" || field.type === "dropdown" || field.type === "short_answer") {
+          if (String(value).trim().toLowerCase() === String(field.correctAnswer).trim().toLowerCase()) {
+            isCorrect = true;
+          }
+        } else if (field.type === "checkboxes") {
+          // Check arrays for exact match
+          const correctArr = Array.isArray(field.correctAnswer) ? field.correctAnswer : [field.correctAnswer];
+          const valArr = Array.isArray(value) ? value : [value];
+          if (correctArr.length === valArr.length && correctArr.every(v => valArr.includes(v))) {
+            isCorrect = true;
+          }
+        }
+
+        if (isCorrect) {
+          scoreReceived = field.points || 0;
+          totalScore += scoreReceived;
+        }
+      }
+
+      validatedAnswers.push({ fieldId: field.id, value, isCorrect, scoreReceived });
     }
   }
 
@@ -85,6 +110,7 @@ export const submitFormResponse = async (formId, submitterId, reqData, ipAddress
     formId: form._id,
     submittedBy: submitterId || null,
     answers: validatedAnswers,
+    totalScore,
     metadata: {
       ipAddress,
       userAgent,
@@ -97,33 +123,50 @@ export const submitFormResponse = async (formId, submitterId, reqData, ipAddress
 
   // Async notifications
   (async () => {
+    console.log("[EMAIL DISPATCH] Starting async notification flow...");
     try {
       const owner = await findUserById(form.createdBy);
       if (owner && owner.email) {
+        console.log(`[EMAIL DISPATCH] Alerting owner: ${owner.email}`);
         const ownerHtml = buildOwnerAlertHTML(form.title || "Untitled Form", savedResponse._id, savedResponse.metadata);
         await sendNotificationEmail(owner.email, `New Response Alert: ${form.title || "Untitled Form"}`, ownerHtml);
+      } else {
+        console.log("[EMAIL DISPATCH] No owner email found.");
       }
 
-      let respondentEmail = null;
-      if (form.settings?.collectEmail) {
+      let targetEmail = reqEmail || null;
+      if (!targetEmail && form.settings?.collectEmail) {
         if (submitterId) {
           const submitter = await findUserById(submitterId);
-          if (submitter) respondentEmail = submitter.email;
+          if (submitter) targetEmail = submitter.email;
         } else {
           const emailField = form.fields.find(f => f.type === "email");
           if (emailField) {
             const emailAnswer = validatedAnswers.find(a => a.fieldId === emailField.id);
-            if (emailAnswer && emailAnswer.value) respondentEmail = String(emailAnswer.value);
+            if (emailAnswer && emailAnswer.value) targetEmail = String(emailAnswer.value);
           }
         }
       }
 
-      if (respondentEmail) {
-        const receiptHtml = buildRespondentReceiptHTML(form.title || "Untitled Form", validatedAnswers);
-        await sendNotificationEmail(respondentEmail, `Response Receipt: ${form.title || "Untitled Form"}`, receiptHtml);
+      if (targetEmail) {
+        console.log(`[EMAIL DISPATCH] Sending confirmation to respondent: ${targetEmail}, sendCopy=${sendCopy}`);
+        let emailHtml = `
+          <div style="font-family: sans-serif; color: #202124;">
+            <h2 style="color: #1a73e8;">Thank you for your submission!</h2>
+            <p>Your response to <strong>${form.title || "Untitled Form"}</strong> has been successfully recorded.</p>
+          </div>
+        `;
+        
+        if (sendCopy) {
+          emailHtml += `<br><hr><br>` + buildRespondentReceiptHTML(form.title || "Untitled Form", validatedAnswers);
+        }
+        
+        await sendNotificationEmail(targetEmail, `Submission Confirmation: ${form.title || "Untitled Form"}`, emailHtml);
+      } else {
+        console.log("[EMAIL DISPATCH] No targetEmail resolved for respondent.");
       }
     } catch (err) {
-      console.error("Email notification dispatch error:", err.message);
+      console.error("[EMAIL DISPATCH ERROR]:", err.message);
     }
   })();
 

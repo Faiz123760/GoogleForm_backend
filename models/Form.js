@@ -9,6 +9,10 @@ const fieldSchema = new mongoose.Schema({
     required: { type: Boolean, default: false },
     options: { type: [String], default: [] },
     
+    // Quiz Mode configurations
+    correctAnswer: { type: mongoose.Schema.Types.Mixed }, // Can be String or Array of Strings
+    points: { type: Number, default: 0 },
+    
     // Linear Scale configurations
     scaleMin: { type: Number, default: 1 },
     scaleMax: { type: Number, default: 5 },
@@ -36,6 +40,7 @@ const formSchema = new mongoose.Schema({
         passwordProtected: { type: Boolean, default: false },
         passwordHash: String,
         expiryDate: Date,
+        isQuiz: { type: Boolean, default: false },
     },
     published: { type: Boolean, default: false },
     views: { type: Number, default: 0 },

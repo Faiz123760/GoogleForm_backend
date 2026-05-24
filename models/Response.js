@@ -20,8 +20,11 @@ const responseSchema = new mongoose.Schema({
         value: {
             type: mongoose.Schema.Types.Mixed, // Can be String, Array (checkboxes), Number, etc.
             required: true
-        }
+        },
+        isCorrect: { type: Boolean, default: false },
+        scoreReceived: { type: Number, default: 0 }
     }],
+    totalScore: { type: Number, default: 0 },
     metadata: {
         ipAddress: String,
         userAgent: String,
